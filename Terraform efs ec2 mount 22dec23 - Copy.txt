@@ -1,0 +1,99 @@
+provider "aws" {
+  region     = "us-east-2" # Change this to your desired AWS region
+  access_key = "AKIA5TDF7TNZ4XKYYYYYPTTYGFWLL"
+  secret_key = "dc8dTaH0aX41zHJvgXb0dhphE&F%&iFVLRhZZ1St0BtS"
+}
+
+# Create an EFS file system
+resource "aws_efs_file_system" "efs_demo" {
+  creation_token   = "efs_demo"
+  performance_mode = "generalPurpose"
+  throughput_mode  = "bursting"
+  encrypted        = true
+  lifecycle_policy {
+    # You can configure lifecycle policies if needed
+    transition_to_ia = "AFTER_7_DAYS"
+  }
+}
+
+# The aws_default_vpc resource behaves differently from normal resources in that if a default VPC exists, 
+# Terraform does not create this resource, 
+resource "aws_default_vpc" "default" {
+  tags = {
+    Name = "Default VPC"
+  }
+}
+
+# Create a security group for the EC2 instance
+resource "aws_security_group" "efs" {
+  name        = "efs_sg"
+  description = "Security group for EC2 instance with EFS"
+  vpc_id = aws_default_vpc.default.id
+
+  ingress {
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Creating key pair for the  EC2 instance
+resource "aws_key_pair" "efs_key" {
+  key_name   = "efs_key"
+  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC6TdPXPvxb+L57OqjOBUj9Eezulp6njOKqWUJhjlpFXQa+NlU51g1eHSohBUjo8iYYQ2IKKUlP/rY26OsIBRQHQmKSJz2Zfn9FIkcdgMp2UuS0Nvreu92ra+YkZT7cNu3iyWY9M5+lJth/RI2CXbIF8/ia7N64+mnfrcMDx77b7rvyE8tEOYc63LmM736HTlj/vK95Bgx/5TafAT23oRM4fLRTE+uckRlrBmJ032DMvxAmvnuQKIBuvmQUoao9PMW+NsglGp84IXMh/Za0G1TAYi255WFcyeyJzH+IGWQD0AQIJW8a25h7cjcsaQHXgSAPZckPNXpuOalu4VWUGUJL4KQ0NsfQEa4Vp+7BPk6VVlg6lqcopruM37rB7BWFzM6bXQFSrOC5BJ67rVvhVsXMD132RYQy8ki0ab666+CW1K1I2cUFjdTrAX39KbeMVRt06f5VJYwpURt5pmzut43tLH+yh1wNUzENSOskOMweG+uua2ajtAtnvhd9PLM2F6M= root@ip-172-31-27-42.us-east-2.compute.internal"
+  }
+
+# Launch an EC2 instance
+resource "aws_instance" "ec2_instance_efs" {
+  ami               = "ami-048e636f368eb3006" # Replace with your desired AMI ID
+  instance_type     = "t2.micro"
+  key_name   = aws_key_pair.efs_key.id
+  vpc_security_group_ids = [aws_security_group.efs.id]
+
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo yum install -y amazon-efs-utils
+              sudo mkdir -p /mnt/efs
+              sudo mount -t efs ${aws_efs_file_system.efs_demo.dns_name}:/mnt/efs
+
+              #Change the root password
+              echo "ubuntu:1" | chpasswd
+              echo "root:1" | chpasswd
+
+              #Enable password authentication for SSH
+              sudo sed 's/PasswordAuthentication no/PasswordAuthentication yes/' -i /etc/ssh/sshd_config
+              sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+              systemctl restart sshd
+              EOF
+
+  tags = {
+    Name      = "ec2-instance-with-efs"
+    CreateBy  = "Abhishek"
+    CreatedOn = "21-Dec-2023"
+  }
+}
+
+
+# Output the EFS DNS name for reference
+output "efs_dns_name" {
+  value = aws_efs_file_system.efs_demo.dns_name
+}
